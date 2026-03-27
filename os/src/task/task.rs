@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{BIG_STRIDE, DEFAULT_PRIORITY, TRAP_CONTEXT_BASE};  // [INFO] CH5 : stride
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -68,6 +68,19 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// [INFO] CH5
+    /// 代表进程的执行进度，初始为 0，始终 >= 2
+    pub stride: usize,
+
+    /// [INFO] CH5
+    /// 进程的优先级，默认初始值为 16
+    pub priority: usize,
+
+    /// [INFO] CH5
+    /// 每次执行累加在 stride 上的步长值，为 BIG_STRIDE / priority
+    pub pass: usize,
+
 }
 
 impl TaskControlBlockInner {
@@ -84,6 +97,22 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+    /// [INFO] CH5
+    /// 更新 stride
+    /// * 用于调度器
+    pub fn update_stride(&mut self) {
+        // 防止溢出
+        self.stride = self.stride.saturating_add(self.pass);
+    }
+
+    /// [INFO] CH5
+    /// 更新 priority
+    /// * 用于 syscall
+    pub fn update_priority(&mut self, priority: usize) {
+        self.priority = priority;
+        // 防止溢出
+        self.pass = BIG_STRIDE.saturating_div(priority);
     }
 }
 
@@ -118,6 +147,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,                             // [INFO] CH5
+                    priority: DEFAULT_PRIORITY,            // [INFO] CH5
+                    pass: BIG_STRIDE.saturating_div(DEFAULT_PRIORITY),   // [INFO] CH5
                 })
             },
         };
@@ -163,6 +195,7 @@ impl TaskControlBlock {
     }
 
     /// parent process fork the child process
+    /// 创建子进程对象 (真实的父进程的内存镜像)，但没有进入调度
     pub fn fork(self: &Arc<Self>) -> Arc<Self> {
         // ---- access parent PCB exclusively
         let mut parent_inner = self.inner_exclusive_access();
@@ -191,6 +224,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,     // [INFO] CH5
+                    priority: DEFAULT_PRIORITY,   // [INFO] CH5
+                    pass: BIG_STRIDE.saturating_div(DEFAULT_PRIORITY),       // [INFO] CH5
                 })
             },
         });

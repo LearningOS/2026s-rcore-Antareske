@@ -11,6 +11,8 @@ use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
+// [INFO] CH5
+use crate::mm::VirtAddr;
 
 /// Processor management structure
 pub struct Processor {
@@ -108,4 +110,27 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// [INFO] CH5
+pub fn mmap(start: VirtAddr, len: usize, port: usize) -> isize {
+    // * 临时值的生命周期会在句末结束，用新变量 binding 延长 unwrap() 返回值的生命
+    // let binding = current_task().unwrap();
+    // * 虽然 inner_exclusive_access 返回可变引用，但仍需手动声明变量为可变
+    // let mut inner = binding.inner_exclusive_access();
+    // inner.memory_set.mmap(start, len, port)
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .mmap(start, len, port)
+}
+
+/// [INFO] CH5
+pub fn munmap(start: VirtAddr, len: usize) -> isize {
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .munmap(start, len)
 }
