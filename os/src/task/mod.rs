@@ -23,6 +23,9 @@ pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
 
+use alloc::collections::BTreeMap;
+
+
 /// The task manager, where all the tasks are managed.
 ///
 /// Functions implemented on `TaskManager` deals with all task state transitions
@@ -45,6 +48,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    // ch3
+    syscall_recorder: BTreeMap<usize, BTreeMap<usize, usize>>,
 }
 
 lazy_static! {
@@ -65,6 +70,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_recorder: BTreeMap::new(),
                 })
             },
         }
@@ -135,6 +141,26 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// ch3
+    fn get_current_syscall_count(&self, syscall_id: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current_task: usize = inner.current_task;
+        let current_counters = inner.syscall_recorder
+            .entry(current_task)
+            .or_insert_with(BTreeMap::new);
+        *current_counters.entry(syscall_id).or_insert(0) as isize
+    }
+
+    /// ch3
+    fn record_syscall(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current_task: usize = inner.current_task;
+        let current_counters = inner.syscall_recorder
+            .entry(current_task)
+            .or_insert_with(BTreeMap::new);
+        *current_counters.entry(syscall_id).or_insert(0) += 1;
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +194,14 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// ch3
+pub fn get_current_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_current_syscall_count(syscall_id)
+}
+
+/// ch3
+pub fn record_syscall(syscall_id: usize) {
+    TASK_MANAGER.record_syscall(syscall_id);
 }
