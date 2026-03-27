@@ -35,11 +35,8 @@ pub fn init() {
 }
 
 fn set_kernel_trap_entry() {
-    extern "C" {
-        fn __trap_from_kernel();
-    }
     unsafe {
-        stvec::write(__trap_from_kernel as usize, TrapMode::Direct);
+        stvec::write(trap_from_kernel as usize, TrapMode::Direct);
     }
 }
 
@@ -63,7 +60,6 @@ pub fn trap_handler() -> ! {
     let cx = current_trap_cx();
     let scause = scause::read(); // get trap cause
     let stval = stval::read(); // get extra value
-
     // trace!("into {:?}", scause.cause());
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {

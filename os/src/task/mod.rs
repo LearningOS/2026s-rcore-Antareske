@@ -24,6 +24,11 @@ pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
 
+/// [INFO] ch4
+use alloc::collections::BTreeMap;
+/// [INFO] ch4
+use crate::mm::VirtAddr;
+
 /// The task manager, where all the tasks are managed.
 ///
 /// Functions implemented on `TaskManager` deals with all task state transitions
@@ -46,6 +51,10 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    /// [INFO] ch4
+    /// task id 就是 tasks 的索引值；current_task 就是当前任务的 task id；
+    /// 因为 task 退出流程不改动 tasks 顺序 (只改状态)，所以 TCB 外部的 syscall_recorder 不会错位。
+    syscall_recorder: BTreeMap<usize, BTreeMap<usize, usize>>,
 }
 
 lazy_static! {
@@ -64,6 +73,8 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    // [INFO] ch4
+                    syscall_recorder: BTreeMap::new(),
                 })
             },
         }
@@ -153,6 +164,42 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// [INFO] ch4
+    /// 获得当前任务对指定 id 的 syscall 的调用次数
+    fn get_current_syscall_count(&self, syscall_id: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current_task: usize = inner.current_task;
+        let current_counters = inner.syscall_recorder
+            .entry(current_task)
+            .or_insert_with(BTreeMap::new);
+        *current_counters.entry(syscall_id).or_insert(0) as isize
+    }
+
+    /// [INFO] ch4
+    /// 记录当前任务对指定 id 的 syscall 的调用次数
+    /// todo)) 将 inner 的 syscall_recorder 改为由 TCB 维护；计数(record_syscall)和
+    /// 查询(get_current_syscall_count)逻辑写到一起
+    fn record_syscall(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current_task: usize = inner.current_task;
+        let current_counters = inner.syscall_recorder
+            .entry(current_task)
+            .or_insert_with(BTreeMap::new);
+        *current_counters.entry(syscall_id).or_insert(0) += 1;
+    }
+
+    /// [INFO] ch4
+    /// 在当前任务地址空间中分配内存。接收 start: VirtAddr
+    /// VirtAddr 有 From<usize> trait
+    pub fn mmap(&self, start: VirtAddr, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        // 获得当前任务的 MemorySet
+        let current_task = inner.current_task;
+        let task = &mut inner.tasks[current_task];
+        let memory_set = &mut task.memory_set;
+        memory_set.mmap(start, len, port)
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +248,33 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// [INFO] ch4
+/// self::get_current_syscall_count 的接口
+pub fn get_current_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_current_syscall_count(syscall_id)
+}
+
+/// [INFO] ch4
+/// self::record_syscall 的接口
+pub fn record_syscall(syscall_id: usize) {
+    TASK_MANAGER.record_syscall(syscall_id);
+}
+
+/// [INFO] ch4
+/// self::mmap 的接口。当前任务由 TASK_MANAGER 维护
+pub fn mmap(start: VirtAddr, len: usize, port: usize) -> isize {
+    TASK_MANAGER.mmap(start, len, port)
+}
+
+/// [INFO] ch4
+/// self::munmap 的接口。当前任务由 TASK_MANAGER 维护
+pub fn munmap(start: VirtAddr, len: usize) -> isize {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    // 获得当前任务的 MemorySet
+    let current_task = inner.current_task;
+    let task = &mut inner.tasks[current_task];
+    let memory_set = &mut task.memory_set;
+    memory_set.munmap(start, len)
 }

@@ -56,6 +56,12 @@ impl StackFrameAllocator {
         self.end = r.0;
         // trace!("last {} Physical Frames.", self.end - self.current);
     }
+
+    /// [INFO] ch4
+    /// 计算未分配的页帧数目
+    pub fn count_unalloc_frame(&self) -> usize {
+        return self.end - self.current + 1 + self.recycled.len();
+    }
 }
 impl FrameAllocator for StackFrameAllocator {
     fn new() -> Self {
@@ -134,4 +140,10 @@ pub fn frame_allocator_test() {
     }
     drop(v);
     println!("frame_allocator_test passed!");
+}
+
+/// [INFO] ch4
+/// 计算未分配页帧的数目
+pub fn count_unalloc_frame() -> usize {
+    FRAME_ALLOCATOR.exclusive_access().count_unalloc_frame()
 }

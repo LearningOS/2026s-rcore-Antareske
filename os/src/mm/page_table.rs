@@ -1,6 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PhysAddr};
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -178,4 +178,35 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// 尝试获取用户虚拟地址 `ptr` 对应的物理内存中的一个字节的可变引用
+/// `for_write = true` 表示写操作，需要检查 W 权限
+/// `for_write = false` 表示读操作，需要检查 R 权限
+pub fn translated_byte_ref_u8(
+    token: usize,
+    ptr: *mut u8,
+    for_write: bool,
+) -> Option<&'static mut u8> {
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr as usize);
+
+    if let Some(pte) = page_table.translate(va.floor()) {
+        let flags = pte.flags();
+        if for_write {
+            if !flags.contains(crate::mm::PTEFlags::W) {
+                return None;
+            }
+        } else {
+            if !flags.contains(crate::mm::PTEFlags::R) {
+                return None;
+            }
+        }
+        // 得到物理地址 + 偏移
+        let mut pa: PhysAddr = pte.ppn().into();
+        pa.0 += va.page_offset();
+        Some(pa.get_mut::<u8>())
+    } else {
+        None
+    }
 }
