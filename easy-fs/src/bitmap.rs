@@ -26,6 +26,11 @@ impl Bitmap {
         }
     }
     /// Allocate a new block from a block device
+    /// 从位图起始位置开始遍历每个块，找到有空闲 bit 的块，将该 bit 置 1 后返回
+    /// 该 bit 的位置，即眼下分配的这个新块在区中的索引
+    /// 实现：用块号遍历位图上每个块并获得其块缓存，在块缓存的起始位置将其解析为 BitmapBlock，
+    ///       其格式为 [u64; 64]，这是为了方便以 u64 遍历块的 bits。当发现不为 u64::MAX 的 u64
+    ///       时，将这个 u64 最低位 0 置为 1，并用 Option 返回这个 bit 的位置。
     pub fn alloc(&self, block_device: &Arc<dyn BlockDevice>) -> Option<usize> {
         for block_id in 0..self.blocks {
             let pos = get_block_cache(

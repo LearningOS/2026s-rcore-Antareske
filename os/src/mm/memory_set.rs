@@ -12,6 +12,9 @@ use core::arch::asm;
 use lazy_static::*;
 use riscv::register::satp;
 
+// [INFO] CH5
+use super::count_unalloc_frame;
+
 extern "C" {
     fn stext();
     fn etext();
@@ -317,6 +320,143 @@ impl MemorySet {
         } else {
             false
         }
+    }
+
+    /// [INFO] CH5
+    /// 返回区间内已映射的 vpn 向量，左闭右闭；形参是 vpn 的版本
+    /// 可以用于获知空间的区间内已映射的 vpn 的数目
+    pub fn get_mapped_pages(&self, start_vpn: VirtPageNum, end_vpn: VirtPageNum) -> Vec<VirtPageNum> {
+        let mut valid_pages: Vec<VirtPageNum> = Vec::new();
+        let mut end_vpn = end_vpn;
+        end_vpn.step();     // VPNRange 左闭右开
+        let vpn_range = VPNRange::new(start_vpn, end_vpn);
+        for vpn in vpn_range {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    valid_pages.push(vpn);
+                }
+            }
+        }
+        valid_pages
+    }
+
+    /// [INFO] CH5
+    /// 申请映射一段虚拟地址
+    pub fn mmap(&mut self, start: VirtAddr, len: usize, port: usize) -> isize {
+        let end: VirtAddr = (usize::from(start) + len - 1).into();
+        let start_vpn = start.floor();
+        let end_vpn = end.floor();
+        let num_pages = end_vpn.0 - start_vpn.0 + 1;
+
+        if start.0 % PAGE_SIZE == 0 && port & !0x7 == 0 && port & 0x7 != 0
+            // && self.count_mapped_page(start_vpn, end_vpn) == 0
+            && self.get_mapped_pages(start_vpn, end_vpn).len() == 0
+            && num_pages <= count_unalloc_frame()
+        {
+            let mut permission = MapPermission::U;
+            if port & 0x1 == 0x1 { permission |= MapPermission::R; }
+            if port & 0x2 == 0x2 { permission |= MapPermission::W; }
+            if port & 0x4 == 0x4 { permission |= MapPermission::X; }
+
+            // [歧义]
+            // insert_framed_area 调用 MapArea::new(.., end_va, ..) 以 end_va.ceil() 为上开界，
+            // 若 end_va 对齐 PAGE_SIZE，end_va.ceil() 等于本身所在页号，则 insert_framed_area 时
+            // 少映射了一页。
+            // [说明]
+            // 当 va 对齐，ceil() 在整除 PAGE_SIZE 时截断 (PAGE_SIZE - 1) 部分，仍等于 va 所在页号，
+            // 即 va.ceil() == va.floor()。可能语义上认为对齐的地址既是前一页的 ceil 又是后一页的 floor。
+            // [解决]
+            // 若地址 end 对齐，令 end ++
+            let upper_bound = if end.aligned() { end.0 + 1 } else { end.0 };
+            self.insert_framed_area(start, upper_bound.into(), permission);
+            return 0;
+        }
+        -1
+    }
+
+    /// [INFO] CH5
+    /// 指定的 VPN 在哪个 MapArea 内
+    pub fn which_framed_area(&mut self, vpn: VirtPageNum) -> Option<&mut MapArea> {
+        for area in self.areas.iter_mut() {
+            if area.map_type == MapType::Framed {
+                if area.vpn_range.get_start() <= vpn && vpn < area.vpn_range.get_end() {
+                    return Some(area);
+                }
+            }
+        }
+        None
+    }
+
+    /// [INFO] CH5
+    /// 在指定 VPN 处把一个 MapArea 切分为左右两个 MapArea, 此 VPN 属于右侧 (新建的) MapArea
+    /// !! 没有考虑如果 area 内有未分配的页帧的情况 (理应不出现这种情况)
+    pub fn split_framed_area(&mut self, at_vpn: VirtPageNum) -> bool {
+        if let Some(area) = self.which_framed_area(at_vpn) {
+            // 如果 area 只有一页, 失败
+            if area.data_frames.len() < 2 {
+                return false;
+            }
+            let right_end_vpn = area.vpn_range.get_end();
+            if at_vpn.0 == area.vpn_range.get_start().0 {
+                return false;
+            }
+            let map_perm = area.map_perm;
+            // 先腾出空间
+            // area.shrink_to(&mut self.page_table, at_vpn);
+            let start = area.vpn_range.get_start();
+            self.shrink_to(start.into(), at_vpn.into());
+            self.insert_framed_area(
+                at_vpn.into(),
+                right_end_vpn.into(),   // right_end_vpn 本来就是右开边界
+                map_perm,
+            );
+            return true
+        }
+        false
+    }
+
+    /// [INFO] CH5
+    /// 取消一段虚拟地址的映射。和 mmap 的逆过程不同，munmap 的粒度不是 MapArea 而是 VPN (因为虚拟区间内可能存在
+    /// 未被映射过的页面)
+    pub fn munmap(&mut self, start: VirtAddr, len: usize) -> isize {
+        if !start.aligned() {   // 需要检查页对齐
+            return -1;
+        }
+        let end: VirtAddr = (usize::from(start) + len - 1).into();
+        let start_vpn = start.floor();
+        let end_vpn = end.floor();
+        // 切分边界使每个 MapArea 对齐到 page boundary（方便后续 whole-area 删除）
+        self.split_framed_area(start_vpn);
+        let mut end_outer_vpn = end_vpn;
+        end_outer_vpn.step();
+        self.split_framed_area(end_outer_vpn);
+
+        // 由题，当区间内出现未映射页号时出错
+        // 不过，由于采用切分逻辑段的算法，本函数仅对区间内合法页号进行删除
+        let total_pages = end_vpn.0 - start_vpn.0 + 1;
+        let mapped_pages = self.get_mapped_pages(start_vpn, end_vpn).len();
+        if mapped_pages != total_pages {
+            return -1;
+        }
+
+        // 重新做一个 areas
+        self.areas = self
+            .areas
+            .drain(..) // 等价于 into_iter()，但不会分配新 Vec，更高效
+            .filter_map(|mut area| {
+                if area.map_type == MapType::Framed
+                    && start_vpn <= area.vpn_range.get_start()
+                    && area.vpn_range.get_end() <= end_outer_vpn
+                {
+                    // 在删除前执行清理逻辑
+                    area.unmap(&mut self.page_table);
+                    None // 丢弃该 area
+                } else {
+                    Some(area) // 保留该 area
+                }
+            })
+            .collect();
+        0
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory

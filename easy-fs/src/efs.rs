@@ -33,6 +33,13 @@ impl EasyFileSystem {
             ((inode_num * core::mem::size_of::<DiskInode>() + BLOCK_SZ - 1) / BLOCK_SZ) as u32;
         let inode_total_blocks = inode_bitmap_blocks + inode_area_blocks;
         let data_total_blocks = total_blocks - 1 - inode_total_blocks;
+        /*
+            求 位图块数 data_bitmap_blocks
+            设：data_bitmap_blocks 为 B
+            因：B * 4096 >= data_total_blocks - B
+            故：B >= ceil(data_total_blocks / 4097)
+            其中 4097 含义：一个数据块位数 (4096) + 数据块位图中表示这个数据块的一位 (1)
+        */
         let data_bitmap_blocks = (data_total_blocks + 4096) / 4097;
         let data_area_blocks = data_total_blocks - data_bitmap_blocks;
         let data_bitmap = Bitmap::new(
@@ -71,7 +78,9 @@ impl EasyFileSystem {
         );
         // write back immediately
         // create a inode for root node "/"
-        assert_eq!(efs.alloc_inode(), 0);
+        assert_eq!(efs.alloc_inode(), 0);   // inode 位图分配
+        // 位图 bit 编号 == 其代表的结构 (DiskInode 或 DataBlock) 的索引
+        // 每个块可存放 4 个 DiskInode (128 字节)，用 bit 编号寻得 DiskInode 的磁盘块号和偏移
         let (root_inode_block_id, root_inode_offset) = efs.get_disk_inode_pos(0);
         get_block_cache(root_inode_block_id as usize, Arc::clone(&block_device))
             .lock()
@@ -112,6 +121,7 @@ impl EasyFileSystem {
         Inode::new(block_id, block_offset, Arc::clone(efs), block_device)
     }
     /// Get inode by id
+    /// 通过 inode 索引号算出其所在块的磁盘块号及其块内的偏移
     pub fn get_disk_inode_pos(&self, inode_id: u32) -> (u32, usize) {
         let inode_size = core::mem::size_of::<DiskInode>();
         let inodes_per_block = (BLOCK_SZ / inode_size) as u32;
@@ -147,5 +157,20 @@ impl EasyFileSystem {
             &self.block_device,
             (block_id - self.data_area_start_block) as usize,
         )
+    }
+}
+
+/// [INFO] CH6
+/// efs 辅助方法
+impl EasyFileSystem {
+    /// 计算 inode_id
+    /// 全 let
+    pub fn cal_inode_id(&self, block_id: usize, block_offset: usize) -> usize {
+        let inode_size = core::mem::size_of::<DiskInode>();
+        let inodes_per_block = BLOCK_SZ / inode_size;
+        // 都用 usize 计算
+        let inode_id = (block_id - self.inode_area_start_block as usize) * inodes_per_block
+            + (block_offset / inode_size);
+        inode_id
     }
 }

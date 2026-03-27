@@ -13,10 +13,15 @@ use alloc::vec::Vec;
 use bitflags::*;
 use easy_fs::{EasyFileSystem, Inode};
 use lazy_static::*;
+// [INFO] CH6
+use super::Stat;
+use crate::fs::StatMode;
+
 
 /// inode in memory
 /// A wrapper around a filesystem inode
 /// to implement File trait atop
+/// 对 easy_fs::Inode 的封装
 pub struct OSInode {
     readable: bool,
     writable: bool,
@@ -125,6 +130,22 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// [INFO] CH6
+/// 在根目录插入一个名字为 new_name，inode_id 和 old_name 文件相同 inode_id 的目录项
+/// 新名字过长会截断
+/// 没有找到 old_name 文件会返回 -1
+pub fn linkat(old_name: &str, new_name: &str) -> isize {
+    ROOT_INODE.linkat(old_name, new_name)
+}
+
+/// [INFO] CH6
+/// 删除根目录下名字为 name 的目录项
+/// 没有找到 name 文件会返回 -1
+/// <!> 功能不完全
+pub fn unlinkat(name: &str) -> isize {
+    ROOT_INODE.unlinkat(name)
+}
+
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable
@@ -155,5 +176,25 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+
+    /// [INFO] CH6
+    /// 获取文件状态信息
+    fn get_stat(&self) -> Stat {
+        let inner = self.inner.exclusive_access();
+        let (inode_id, nlink, is_file) = inner.inode.get_stat();
+
+        let mode = if is_file {
+            StatMode::FILE
+        } else {
+            StatMode::DIR
+        };
+        Stat {
+            dev: 0,
+            ino: inode_id,
+            mode,
+            nlink,
+            pad: [0; 7],
+        }
     }
 }

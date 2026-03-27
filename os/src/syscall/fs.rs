@@ -2,6 +2,8 @@
 use crate::fs::{open_file, OpenFlags, Stat};
 use crate::mm::{translated_byte_buffer, translated_str, UserBuffer};
 use crate::task::{current_task, current_user_token};
+// [INFO] CH6
+use crate::fs::{linkat, unlinkat};
 
 pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     trace!("kernel:pid[{}] sys_write", current_task().unwrap().pid.0);
@@ -53,6 +55,7 @@ pub fn sys_open(path: *const u8, flags: u32) -> isize {
     let path = translated_str(token, path);
     if let Some(inode) = open_file(path.as_str(), OpenFlags::from_bits(flags).unwrap()) {
         let mut inner = task.inner_exclusive_access();
+        // 如此这般，分配一个 fd
         let fd = inner.alloc_fd();
         inner.fd_table[fd] = Some(inode);
         fd as isize
@@ -71,33 +74,86 @@ pub fn sys_close(fd: usize) -> isize {
     if inner.fd_table[fd].is_none() {
         return -1;
     }
+    // 如此这般，删一个 fd
     inner.fd_table[fd].take();
     0
 }
 
+/// [INFO] CH6
+/// 获取文件状态
+/// fd 文件描述符
+/// st 文件状态结构体的可变引用
 /// YOUR JOB: Implement fstat.
-pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {
+pub fn sys_fstat(fd: usize, st: *mut Stat) -> isize {
     trace!(
-        "kernel:pid[{}] sys_fstat NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_fstat",
         current_task().unwrap().pid.0
     );
-    -1
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+    if fd >= inner.fd_table.len() {
+        return -1;
+    }
+    if let Some(file) = &inner.fd_table[fd] {
+        let file = file.clone();
+        drop(inner);
+
+        let stat = file.get_stat();
+        // 将 Stat 结构体转成字节切片
+        let stat_bytes: &[u8] = unsafe {
+            core::slice::from_raw_parts(
+                &stat as *const Stat as *const u8,
+                core::mem::size_of::<Stat>(),
+            )
+        };
+        let user_buffers = UserBuffer::new(
+            translated_byte_buffer(
+                current_user_token(),
+                st as *const u8,
+                core::mem::size_of::<Stat>()
+            )
+        );
+        let mut user_buffers_iter = user_buffers.into_iter();
+        for &byte in stat_bytes {
+            if let Some(st_byte_ref) = user_buffers_iter.next() {
+                unsafe { *st_byte_ref = byte; }
+            } else {
+                return -1;  // 用户缓冲区不足
+            }
+        }
+        0
+    } else {
+        -1  // 文件描述符不存在
+    }
 }
 
+/// [INFO] CH6
+/// 创建一个文件的一个硬链接
+/// 没有找到 old_name 文件会返回 -1
+/// ! 不考虑新文件路径已经存在的情况
 /// YOUR JOB: Implement linkat.
-pub fn sys_linkat(_old_name: *const u8, _new_name: *const u8) -> isize {
+pub fn sys_linkat(old_name: *const u8, new_name: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_linkat NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_linkat",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let old_name = translated_str(token, old_name);
+    let new_name = translated_str(token, new_name);
+    if old_name == new_name {
+        return -1
+    }
+    linkat(old_name.as_str(), new_name.as_str())
 }
 
+/// [INFO] CH6
+/// 取消一个文件路径到文件的链接  
 /// YOUR JOB: Implement unlinkat.
-pub fn sys_unlinkat(_name: *const u8) -> isize {
+pub fn sys_unlinkat(name: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_unlinkat NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_unlinkat",
         current_task().unwrap().pid.0
     );
-    -1
+    let name = translated_str(current_user_token(), name);
+    unlinkat(name.as_str())
 }

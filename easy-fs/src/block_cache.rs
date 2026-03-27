@@ -53,10 +53,12 @@ impl BlockCache {
         unsafe { &mut *(addr as *mut T) }
     }
 
+    /// 在块缓冲的指定偏移处中读取 T 类型不可变引用并用闭包对其操作
     pub fn read<T, V>(&self, offset: usize, f: impl FnOnce(&T) -> V) -> V {
         f(self.get_ref(offset))
     }
 
+    /// 在块缓冲的指定偏移处中读取 T 类型可变引用并用闭包对其操作
     pub fn modify<T, V>(&mut self, offset: usize, f: impl FnOnce(&mut T) -> V) -> V {
         f(self.get_mut(offset))
     }
@@ -70,6 +72,7 @@ impl BlockCache {
 }
 
 impl Drop for BlockCache {
+    /// drop 时写回磁盘
     fn drop(&mut self) {
         self.sync()
     }
@@ -88,6 +91,9 @@ impl BlockCacheManager {
         }
     }
 
+    /// 获取指定 id 的块缓存，若没有则从磁盘读新块缓存；队列满时先缓存替换
+    /// - 缓存替换：队列中删除一个空闲块缓存，新块缓存加队尾
+    /// - 空闲块缓存：强引用计数 = 1，即只有块缓存管理器保留的一份副本
     pub fn get_block_cache(
         &mut self,
         block_id: usize,

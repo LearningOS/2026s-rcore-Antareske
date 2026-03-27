@@ -6,7 +6,8 @@ use core::fmt::{Debug, Formatter, Result};
 /// Magic number for sanity check
 const EFS_MAGIC: u32 = 0x3b800001;
 /// The max number of direct inodes
-const INODE_DIRECT_COUNT: usize = 28;
+/// [INFO] CH6 加上新的字段 nlink: u32 后，将直接索引数减 1
+const INODE_DIRECT_COUNT: usize = 27;
 /// The max length of inode name
 const NAME_LENGTH_LIMIT: usize = 27;
 /// The max number of indirect1 inodes
@@ -85,6 +86,7 @@ pub struct DiskInode {
     pub direct: [u32; INODE_DIRECT_COUNT],
     pub indirect1: u32,
     pub indirect2: u32,
+    pub nlink: u32,     // [INFO] CH6 硬链接计数
     type_: DiskInodeType,
 }
 
@@ -96,6 +98,7 @@ impl DiskInode {
         self.direct.iter_mut().for_each(|v| *v = 0);
         self.indirect1 = 0;
         self.indirect2 = 0;
+        self.nlink = 1;
         self.type_ = type_;
     }
     /// Whether this inode is a directory
@@ -137,6 +140,7 @@ impl DiskInode {
         Self::total_blocks(new_size) - Self::total_blocks(self.size)
     }
     /// Get id of block given inner id
+    /// 指定文件数据块的索引号 inner_id，查其磁盘块号 block_id
     pub fn get_block_id(&self, inner_id: u32, block_device: &Arc<dyn BlockDevice>) -> u32 {
         let inner_id = inner_id as usize;
         if inner_id < INODE_DIRECT_COUNT {
@@ -309,6 +313,8 @@ impl DiskInode {
         v
     }
     /// Read data from current disk inode
+    /// 从文件的指定偏移处将数据读到指定 u8 切片中；
+    /// 读取起始位置 >= 结束位置时返回 0；(右端) 只读取文件的有效范围。
     pub fn read_at(
         &self,
         offset: usize,
@@ -350,6 +356,7 @@ impl DiskInode {
     }
     /// Write data into current disk inode
     /// size must be adjusted properly beforehand
+    /// <!> 需保证写入的切片右边界小于文件右边界，否则提前 increase_size 保证写入完整性
     pub fn write_at(
         &mut self,
         offset: usize,
@@ -389,6 +396,8 @@ impl DiskInode {
     }
 }
 /// A directory entry
+/// 目录项作为目录型 DiskInode 的数据存放于 DiskInode 的数据块中，由此可见目录也是文件；
+/// 目录项用 inode_id (inode 区索引号) 记录该目录项的文件的 DiskInode
 #[repr(C)]
 pub struct DirEntry {
     name: [u8; NAME_LENGTH_LIMIT + 1],
@@ -406,6 +415,7 @@ impl DirEntry {
         }
     }
     /// Crate a directory entry from name and inode number
+    /// 名字过长会截断
     pub fn new(name: &str, inode_id: u32) -> Self {
         let mut bytes = [0u8; NAME_LENGTH_LIMIT + 1];
         bytes[..name.len()].copy_from_slice(name.as_bytes());

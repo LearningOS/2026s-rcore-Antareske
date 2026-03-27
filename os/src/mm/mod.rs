@@ -5,7 +5,6 @@
 //! map area and memory set, is implemented here.
 //!
 //! Every task or process has a memory_set to control its virtual memory.
-
 mod address;
 mod frame_allocator;
 mod heap_allocator;
@@ -22,6 +21,8 @@ pub use page_table::{
     translated_byte_buffer, translated_ref, translated_refmut, translated_str, PageTable,
     PageTableEntry, UserBuffer, UserBufferIterator,
 };
+// [INFO] CH5
+pub use frame_allocator::count_unalloc_frame;
 
 /// initiate heap allocator, frame allocator and kernel space
 pub fn init() {

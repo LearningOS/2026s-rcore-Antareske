@@ -220,6 +220,7 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
 }
 
 /// An abstraction over a buffer passed from user space to kernel space
+/// 作为 translated_byte_buffer 结果的封装，面向 IO 调用 (来自 EFS 的读写)
 pub struct UserBuffer {
     /// A list of buffers
     pub buffers: Vec<&'static mut [u8]>,
@@ -243,6 +244,7 @@ impl UserBuffer {
 impl IntoIterator for UserBuffer {
     type Item = *mut u8;
     type IntoIter = UserBufferIterator;
+    /// 以 u8 为粒度的迭代器
     fn into_iter(self) -> Self::IntoIter {
         UserBufferIterator {
             buffers: self.buffers,
