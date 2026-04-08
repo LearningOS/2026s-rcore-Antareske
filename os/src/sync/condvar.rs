@@ -31,7 +31,7 @@ impl Condvar {
     pub fn signal(&self) {
         let mut inner = self.inner.exclusive_access();
         if let Some(task) = inner.wait_queue.pop_front() {
-            wakeup_task(task);
+            wakeup_task(task);  // 设为 Ready 并加到调度器里
         }
     }
 
@@ -42,7 +42,7 @@ impl Condvar {
         let mut inner = self.inner.exclusive_access();
         inner.wait_queue.push_back(current_task().unwrap());
         drop(inner);
-        block_current_and_run_next();
+        block_current_and_run_next();  // 从调度器取走（置为 None）current_task 并设为 Blocked
         mutex.lock();
     }
 }
