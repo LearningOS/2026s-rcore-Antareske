@@ -251,7 +251,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
-                    sync_guard: parent.sync_guard.clone(),
+                    sync_guard: parent.sync_guard.clone(),  // clone
                 })
             },
         });

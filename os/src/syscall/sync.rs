@@ -53,8 +53,8 @@ pub fn sys_mutex_create(blocking: bool) -> isize {
         process_inner.sync_guard.mutex.reset_resource(id, 1);
         id as isize
     } else {
-        let id = process_inner.mutex_list.len() - 1;
         process_inner.mutex_list.push(mutex);
+        let id = process_inner.mutex_list.len() - 1;  // 先 push 再算 id
         // 同上
         process_inner.sync_guard.mutex.reset_resource(id, 1);
         id as isize
@@ -91,10 +91,8 @@ pub fn sys_mutex_lock(mutex_id: usize) -> isize {
     mutex.lock();
     // 更新状态
     let process = current_process();
-    let mutex_guard = &mut process
-        .inner_exclusive_access()
-        .sync_guard
-        .mutex;
+    let mut inner = process.inner_exclusive_access();
+    let mutex_guard = &mut inner.sync_guard.mutex;
     // 分配完成，更新
     *mutex_guard.available.get_mut(&mutex_id).unwrap() -= 1;
     *mutex_guard.allocation.get_mut(&tid).unwrap().get_mut(&mutex_id).unwrap() += 1;
@@ -116,9 +114,9 @@ pub fn sys_mutex_unlock(mutex_id: usize) -> isize {
     );
     let process = current_process();
     let mut process_inner = process.inner_exclusive_access();
-    let tid = current_task().unwrap().inner_exclusive_access().res.as_ref().unwrap().tid;
     let mutex = Arc::clone(process_inner.mutex_list[mutex_id].as_ref().unwrap());
     // 更新状态
+    let tid = current_task().unwrap().inner_exclusive_access().res.as_ref().unwrap().tid;
     *process_inner.sync_guard.mutex.allocation.get_mut(&tid).unwrap().get_mut(&mutex_id).unwrap() -= 1;
     *process_inner.sync_guard.mutex.available.get_mut(&mutex_id).unwrap() += 1;
     drop(process_inner);
@@ -176,11 +174,11 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
     );
     let process = current_process();
     let mut process_inner = process.inner_exclusive_access();
+    let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
     let tid = current_task().unwrap().inner_exclusive_access().res.as_ref().unwrap().tid;
     // V 操作，归还
     *process_inner.sync_guard.semaphore.available.get_mut(&sem_id).unwrap() += 1;
     *process_inner.sync_guard.semaphore.allocation.get_mut(&tid).unwrap().get_mut(&sem_id).unwrap() -= 1;
-    let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
     drop(process_inner);
     sem.up();
     0
@@ -212,13 +210,12 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
         }
     }
     let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
+    drop(process_inner);  // [INFO] 漏了个 drop 查了一晚上
     sem.down();
     // 更新状态
     let process = current_process();
-    let sema_guard = &mut process
-        .inner_exclusive_access()
-        .sync_guard
-        .semaphore;
+    let mut inner = process.inner_exclusive_access();
+    let sema_guard = &mut inner.sync_guard.semaphore;
     *sema_guard.available.get_mut(&sem_id).unwrap() -= 1;
     *sema_guard.allocation.get_mut(&tid).unwrap().get_mut(&sem_id).unwrap() += 1;
     *sema_guard.need.get_mut(&tid).unwrap().get_mut(&sem_id).unwrap() -= 1;
